@@ -178,38 +178,70 @@ def load_pretrained_params(model, path):
         path + ".pdparams"
     ), "The {}.pdparams does not exists!".format(path)
 
+    # *** ขั้นตอนที่ 1: โหลดพารามิเตอร์จากดิสก์ ***
     params = paddle.load(path + ".pdparams")
+
+    # ************************************************************
+    # *** ขั้นตอนที่ 2: เพิ่มตรรกะการแปลง BF16 (bfloat16) เป็น FP32 (float32) ***
+    # ************************************************************
+    new_params = {}
+    
+    # วนซ้ำผ่านคีย์และค่า (Tensor) ใน params ที่โหลดมา
+    for k, v in params.items():
+        # ตรวจสอบว่าค่าเป็น Tensor และมีชนิดข้อมูลเป็น bfloat16 หรือไม่
+        if isinstance(v, paddle.Tensor) and v.dtype == paddle.bfloat16:
+            # ทำการ cast จาก BF16 ไปยัง Float32
+            # การแปลงนี้ช่วยแก้ปัญหา DType Mismatch ที่โมเดลคาดหวัง FP32
+            new_params[k] = v.cast('float32')
+            logger.info("Casting parameter {} from BF16 to FP32.".format(k))
+        else:
+            new_params[k] = v
+            
+    # อัปเดต params ด้วย Tensor ที่ถูกแปลงแล้ว
+    params = new_params
+    
+    # ************************************************************
+    # *** สิ้นสุดการแก้ไขการแปลง BF16 เป็น FP32 ***
+    # ************************************************************
 
     state_dict = model.state_dict()
 
     new_state_dict = {}
-    is_float16 = False
+    is_float16 = False # Flag นี้มักใช้สำหรับการแปลง FP16 to FP32 ซึ่งเราคงไว้สำหรับโค้ดเดิม
 
     for k1 in params.keys():
         if k1 not in state_dict.keys():
             logger.warning("The pretrained params {} not in model".format(k1))
         else:
-            if params[k1].dtype == paddle.float16:
-                is_float16 = True
-            if params[k1].dtype != state_dict[k1].dtype:
-                params[k1] = params[k1].astype(state_dict[k1].dtype)
-            if list(state_dict[k1].shape) == list(params[k1].shape):
-                new_state_dict[k1] = params[k1]
+            # แปลงเป็น fp32 ถ้าจำเป็น
+            # เนื่องจากเราแปลง BF16 เป็น FP32 ไปแล้ว โค้ดนี้จึงมักจะจัดการกับ FP16
+            # หรือ Tensor ที่ไม่ใช่ float เช่น int/bool ที่อาจถูก cast ใน _to_fp32
+            pre_v = _to_fp32(params[k1]) 
+
+            # ถ้า dtype ยังไม่ตรง ให้ cast ให้ตรง param ปลายทาง
+            if pre_v.dtype!= state_dict[k1].dtype:
+                pre_v = pre_v.astype(state_dict[k1].dtype)
+
+            if list(state_dict[k1].shape) == list(pre_v.shape):
+                new_state_dict[k1] = pre_v
             else:
                 logger.warning(
-                    "The shape of model params {} {} not matched with loaded params {} {} !".format(
+                    "The shape of model params {} {} not matched with loaded params {} {}!".format(
                         k1, state_dict[k1].shape, k1, params[k1].shape
                     )
                 )
 
     model.set_state_dict(new_state_dict)
+    
+    # หากมีการใช้ BF16 ในโมเดล VLM นี้เป็นหลัก
+    # คุณอาจต้องพิจารณาอัปเดต is_float16 หรือเพิ่ม is_bfloat16 เพื่อการบันทึกข้อมูล (logging) ที่ถูกต้อง
     if is_float16:
         logger.info(
             "The parameter type is float16, which is converted to float32 when loading"
         )
+        
     logger.info("load pretrain successful from {}".format(path))
     return is_float16
-
 
 def save_model(
     model,
