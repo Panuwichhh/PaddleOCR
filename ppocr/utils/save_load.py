@@ -46,6 +46,17 @@ def get_FLAGS_json_format_model():
 
 FLAGS_json_format_model = get_FLAGS_json_format_model()
 
+# ******************************************************************
+def _to_fp32(tensor):
+    """
+    Ensure the tensor is cast to float32 if it is float16 or bfloat16.
+    """
+    if isinstance(tensor, paddle.Tensor):
+        # ตรวจสอบ BF16 และ FP16 และแปลงเป็น FP32
+        if tensor.dtype == paddle.float16 or tensor.dtype == paddle.bfloat16: 
+            return tensor.astype(paddle.float32)
+    return tensor
+# ******************************************************************
 
 def _mkdir_if_not_exist(path, logger):
     """
